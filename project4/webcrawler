@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+import socket
+import html
+import xml
+import ssl
+import sys
+import argparse
+import urllib.parse
+import webdriver
+
+cookie = ""
+secret_flags = []
+
+
+# HTTP/1.1 feature
+def chunked_encoding():
+    pass
+
+
+# These requests are necessary for downloading HTML pages.
+def http_get():
+    pass
+
+
+# Login to Fakebook.
+# reverse engineer the HTML form on the log-in page, CSRF
+def http_post(username, password):
+    url = "http://fring.ccs.neu.edu/accounts/login/?next=/fakebook/"
+    # handle_http_status_code()
+    # cookie_management()
+    pass
+
+
+# Fakebook uses cookies to track whether clients are logged in to the site.
+# If crawler logs in successfully crawler successfully, Fakebook will return a session cookie to your crawler.
+# Store this cookie, and submit it along with each HTTP GET request as it crawls Fakebook.
+# If your crawler fails to handle cookies properly, then your software will not be able to successfully crawl Fakebook.
+def cookie_management():
+    pass
+
+
+# status codes:
+# 200 -> everything is okay
+# 301 -> Moved Permanently: This is known as an HTTP redirect.
+# Your crawler should try the request again using the new URL given by the server in the Location header.
+# 403 -> Forbidden and 404 -> Not Found: Our web server may return these codes in order to trip up your crawler.
+# In this case, your crawler should abandon the URL that generated the error code.
+# 500 -> Internal Server Error: Our web server may randomly return this error code to your crawler.
+# In this case, your crawler should re-try the request for the URL until the request is successful.
+def handle_http_status_code():
+    pass
+
+
+# Observe many URLs.
+# Typically, these uncrawled URLs are stored in a queue, stack, or list until the crawler is ready to visit them.
+# These uncrawled URLs are known as the frontier.
+def track_frontier():
+    pass
+
+
+# do not visit URLs that it has already crawled -> avoid infinity loops
+def watch_out_for_loops():
+    pass
+
+
+# check to make sure that each URL has a valid domain
+# (i.e. the domain is fring.ccs.neu.edu) before you attempt to visit it.
+def only_crawl_target_domain():
+    pass
+
+
+# Reading arguments from command line and contains the logic of the program
+def main():
+    # Reading useful message from command line and save them and use them later
+
+    # arguments_number = len(sys.argv)
+    # number_of_arguments = 3
+    # argument_list = sys.argv
+    # if arguments_number != number_of_arguments:
+    #     print("Invalid input message, program exit")
+    #     exit()
+    # username = argument_list[1]
+    # password = argument_list[2]
+
+    username = "001649780"
+    password = "5K4XGW1X"
+
+    http_post(username, password)
+
+    # secret flag format:
+    # <h2 class='secret_flag' style="color:red">FLAG: 64-characters-of-random-alphanumerics</h2>
+
+    # root page for Fakebook
+    # http://fring.ccs.neu.edu/fakebook/
+
+
+if __name__ == "__main__":
+    main()

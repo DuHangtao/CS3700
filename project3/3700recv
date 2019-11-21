@@ -1,0 +1,142 @@
+#!/usr/bin/python -u
+#
+# Project 3 Starter Code
+#
+
+import sys
+import socket
+import time
+import datetime
+import select
+import json
+import copy
+
+
+def log(string):
+    sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
+
+
+MSG_SIZE = 1500
+TIMEOUT = 30
+
+# all received packets
+# a dictionary used to store all received packets {key -> sequence number: value: data}
+# useful for reordering the packet
+# check duplicate packets
+all_received_packets = {}
+
+# Store the packets need to be sent
+packets_in_queue = {}
+
+# The flag to keep track if the received packet is in right order
+current_sequence = 0
+
+current_sender_addr = ()
+
+# Bind to localhost and an ephemeral port
+UDP_IP = "127.0.0.1"
+UDP_PORT = 0
+
+# Set up the socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind((UDP_IP, UDP_PORT))
+sock.settimeout(TIMEOUT)
+
+# Get port we bound to
+UDP_PORT = sock.getsockname()[1]
+log("[bound] " + str(UDP_PORT))
+
+
+# ACCEPTED (in-order): the sequence number matches
+# ACCEPTED (out-of-order):
+# if received packet from sender with the sequence number which is not received want. (sender: receiver:)
+# IGNORED : if received the same packet, simply log -> IGNORED
+def check_data(packet):
+    global current_sequence
+    global all_received_packets
+    global packets_in_queue
+    sequence_number = packet["sequence"]
+    all_received_sequence_numbers = all_received_packets.keys()
+
+    if sequence_number in all_received_sequence_numbers:
+        my_log("IGNORED in all packets", packet)
+        ack(packet)
+        return
+    else:
+        all_received_packets[sequence_number] = packet
+        if current_sequence == sequence_number:
+            my_log("ACCEPTED (in-order)", packet)
+            ack(packet)
+            sys.stdout.write(packet['data'])
+            current_sequence = current_sequence + len(packet['data'])
+            write_data_in_queue()
+        else:
+            my_log("ACCEPTED (out-of-order)", packet)
+            ack(packet)
+            packets_in_queue[sequence_number] = packet
+        return
+
+
+def write_data_in_queue():
+    global current_sequence
+    while current_sequence in packets_in_queue.keys():
+        current_packet = packets_in_queue[current_sequence]
+        sys.stdout.write(current_packet['data'])
+        current_sequence = current_sequence + len(current_packet['data'])
+    return
+
+
+def send_ack_in_queue():
+    global current_sequence
+    global packets_in_queue
+
+    while current_sequence in packets_in_queue:
+        current_packet = all_received_packets[current_sequence]
+        sys.stdout.write(current_packet['data'])
+        ack(packet)
+        current_sequence = current_sequence + len(current_packet['data'])
+
+
+def my_log(flag, packet):
+    log("[recv data] " + str(packet['sequence']) + " (" + str(
+        len(packet['data'])) + ") " + flag)
+
+
+def ack(packet):
+    a_ack = json.dumps({"ack": packet['sequence'] + len(packet['data'])})
+    log("ABOUT TO SEND " + a_ack)
+    if sock.sendto(a_ack, current_sender_addr) < len(a_ack):
+        log("[error] unable to fully send packet")
+
+
+# Now listen for packets
+while True:
+    result = sock.recvfrom(MSG_SIZE)
+
+    # If nothing is ready, we hit the timeout
+    if result:
+
+        (data, addr) = result
+        current_sender_addr = addr
+
+        try:
+            decoded = json.loads(data)
+
+            # If the EOF flag is set, exit
+            if decoded['eof']:
+                log("[completed]")
+                sys.exit(0)
+
+            # If there is data, we accept it and print it out
+            if decoded['data']:
+                # check if the received packet is in order, without duplicates, missing data
+                check_data(decoded)
+            else:
+                ack(decoded)
+
+        except (ValueError, KeyError, TypeError) as e:
+            log("[recv corrupt packet]")
+            raise e
+    else:
+        log("[error] timeout")
+        sys.exit(-1)

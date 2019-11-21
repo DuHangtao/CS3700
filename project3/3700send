@@ -1,0 +1,231 @@
+#!/usr/bin/python -u
+#
+# Project 3 Starter Code
+#
+
+import sys
+import socket
+import time
+import datetime
+import select
+import json
+import copy
+
+MSG_SIZE = 1500
+DATA_SIZE = 1000
+TIMEOUT = 0.6
+SEQUENCE = 0
+CWND = 10
+RTT = 0
+base = 0
+current_timeout = 0
+num_of_packets_sent = 0
+received_ack_at_current_round = 0
+
+# Bind to localhost and an ephemeral port
+IP_PORT = sys.argv[1]
+UDP_IP = IP_PORT[0:IP_PORT.find(":")]
+UDP_PORT = int(IP_PORT[IP_PORT.find(":") + 1:])
+dest = (UDP_IP, UDP_PORT)
+
+# Set up the socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.settimeout(TIMEOUT)
+
+# A dictionary to store all the packets sent
+all_packets = {}
+
+# A queue store all the packets waiting for ack
+packets_queue = []
+
+
+def log(string):
+    sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
+
+
+def send_next_packet():
+    global SEQUENCE
+    data = sys.stdin.read(DATA_SIZE)
+
+    # print("what data is:", data)
+    if len(data) > 0:
+        # msg = {"ack": false, "data": "(the input from stdin)", "eof": false, "sequence":(increase by 1 by one char)}
+        # length of msg itself without data is 55
+        msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False})
+
+        # print("length of msg", len(msg))
+        # if the send message is bigger than 1472
+        # length of the msg is bound to 1059
+        assert (len(msg) <= 1472), "ERROR: Datagram is longer than 1472 bytes!!!"
+
+        SEQUENCE += len(data)
+        # sendto returns the bytes send to the receiver
+        if sock.sendto(msg, dest) < len(msg):
+            log("[error] unable to fully send packet")
+        else:
+            # add the all sent packets to a dic
+            all_packets[SEQUENCE] = json.loads(msg)
+            # add the packets waiting for ack to the queue
+            packets_queue.append(SEQUENCE)
+            log("[send data] " + str(SEQUENCE) + " (" + str(len(data)) + ")")
+        return True
+    else:
+        # EOF
+        return False
+
+
+# need to consider if transfer multiple packets without ack
+def retransmission():
+    for current_sequence_num in packets_queue:
+        current_packet = all_packets[current_sequence_num]
+        sent_data = current_packet["data"]
+        msg = json.dumps(current_packet)
+        sock.sendto(msg, dest)
+        log("[resend data] " + str(current_sequence_num) + " (" + str(len(sent_data)) + ")")
+
+
+# calculating the RTT by sending and receiving handshake
+def estimate_rtt():
+    global RTT
+    global current_timeout
+    all_rtt = []
+    for i in range(5):
+        rtt = send_handshake()
+        all_rtt.append(rtt)
+    max_rtt = max(all_rtt)
+    current_timeout = 3 * max_rtt
+    sock.settimeout(current_timeout)
+    return True
+
+
+def send_handshake():
+    hand_shake = json.dumps({"sequence": SEQUENCE, "data": "", "ack": False, "eof": False})
+    send_time = time.time()
+    sock.sendto(hand_shake, dest)
+    log("[send data] " + str(SEQUENCE) + " (" + str(0) + ")")
+    try:
+        sock.recvfrom(MSG_SIZE)
+    except socket.timeout:
+        return send_handshake()
+    else:
+        received_time = time.time()
+        log("[recv handshake] " + str(SEQUENCE))
+        rtt = received_time - send_time
+    return rtt
+
+
+# how many packet can be sent onto the network before receiving an ack
+def send_packets():
+    global num_of_packets_sent
+    global received_ack_at_current_round
+    received_ack_at_current_round = 0
+    num_of_packets_sent = 0
+    num_packets_in_queue = len(packets_queue)
+    if num_packets_in_queue > 0:
+        retransmission()
+    num_of_packets_sent += num_packets_in_queue
+    cwnd = copy.deepcopy(CWND) - num_packets_in_queue
+    while cwnd > 0:
+        has_data = send_next_packet()
+        if not has_data:
+            if len(packets_queue) == 0:
+                eof()
+            else:
+                return False
+        cwnd = cwnd - 1
+        num_of_packets_sent += 1
+    return True
+
+
+# Delete all received ack packets from queue
+def del_from_queue(ack):
+    global packets_queue
+    if ack in packets_queue:
+        index = packets_queue.index(ack)
+        packets_queue.pop(index)
+
+
+def eof():
+    for i in range(5):
+        sock.sendto(json.dumps({"eof": True, "data": "", "sequence": SEQUENCE, "ack": False}), dest)
+    sys.exit(0)
+
+
+def receive_last_few_packets():
+    while len(packets_queue) > 0:
+        try:
+            result = sock.recvfrom(MSG_SIZE)
+        except socket.timeout:
+            retransmission()
+        else:
+            (data, addr) = result
+            decoded = json.loads(data)
+            del_from_queue(decoded['ack'])
+            log("[recv ack] " + str(decoded['ack']))
+    eof()
+
+
+def start_next_round():
+    if not send_packets():
+        # ("EOF", packets_queue)
+        if len(packets_queue) > 0:
+            receive_last_few_packets()
+        # EOF
+        else:
+            eof()
+
+
+def resend_when_sock_error():
+    if len(packets_queue) > 0:
+        current_packet = all_packets[0]
+        sent_data = current_packet["data"]
+        msg = json.dumps(current_packet)
+        sock.sendto(msg, dest)
+        log("[resend data] " + str(current_sequence_num) + " (" + str(len(sent_data)) + ")")
+    return
+
+
+# estimate RTT
+estimate_rtt()
+
+# Start sending
+send_packets()
+
+# Now read in data, send packets
+while True:
+    log("ABOUT TO SLEEP")
+    try:
+        result = sock.recvfrom(MSG_SIZE)
+
+    # Timeout only when sender not receive  any ack, which means sender have to resend
+    except socket.timeout:
+        if received_ack_at_current_round == 0:
+            sock.settimeout(2 * current_timeout)
+        else:
+            if len(packets_queue) < (0.3 * CWND):
+                base += 1
+                CWND = CWND + 2 ** base
+            start_next_round()
+        continue
+    else:
+        # Wait a certain amount of time to see if receiver send back anything
+        if result:
+
+            # Data = {"ack": ...}, addr = (UDP_ip, bound_port)
+            (data, addr) = result
+            try:
+                decoded = json.loads(data)
+
+                current_ack = decoded['ack']
+                if current_ack == 0:
+                    continue
+                else:
+                    del_from_queue(current_ack)
+                    received_ack_at_current_round += 1
+                    log("[recv ack] " + str(decoded['ack']))
+
+            except (ValueError, KeyError, TypeError):
+                log("[recv corrupt packet]")
+        else:
+            log("[error] timeout")
+            sys.exit(-1)
